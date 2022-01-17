@@ -1,0 +1,161 @@
+#!/usr/bin/env python3
+
+# Add your own imports as needed
+import sys
+import hashlib
+import socket
+import os
+
+# Feel free to substitute this as the User-Agent header in your outgoing requests
+USER_AGENT = b'Mozilla/5.0 (X11; Linux x86_64; rv:57.0) Gecko/20100101 Firefox/57.0'
+
+# A buffer size.  Use when buffers have sizes.  Recommended over reading entire
+# files or responses into a single bytes object, which may not be particularly
+# good when I'm trying to listen to di.fm using the proxy.
+BUFSIZ = 4096
+
+
+# Some helper functions
+
+def cachefile(url):
+    """Return a specific filename to use for caching the given URL.
+
+    Please use this to generate cache filenames, passing it the full URL as
+    given in the client request.  (This will help me write tests for grading.)
+    """
+    return 'cache/' + hashlib.sha256(url).hexdigest()
+
+def pe(*args, **kwargs):
+    """Print to standard error.
+
+    Nothing earth-shattering here, just saves typing.  Use exactly the same as
+    you would the print() function.
+    """
+    kwargs['file'] = sys.stderr
+    print(*args, **kwargs)
+
+
+### Your code here! ###
+def main():
+	#create a socket
+	s=socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+	s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+	#receive user-specified port number from the command line
+	if len(sys.argv) != 2:
+	    print('Please provide a port number')
+	    sys.exit()
+	else:
+	    port = int(sys.argv[1])
+	try:
+		s.bind(('', port)) #listening on incoming request on this specified port
+		print(f'Socket binds to {port}')
+	except socket.error as message:
+		print('Bind failed. ' + message[1])
+		sys.exit()
+	s.listen(5) #puts the socket into a listen mode
+	print('Socket is listening')
+	
+	while True:
+		(clientsocket, address) = s.accept() #initiates a connection with the client
+		print(f'Connection from {address} has been established')
+		request = clientsocket.recv(BUFSIZ) 
+		requested = parseurl(request)
+		host = requested[0]
+		portNo = requested[1]
+		url = requested[2]
+		path = requested[3]
+		dir_name = cachefile(url)
+		lastslash = dir_name.rindex('/')
+		file_name = dir_name[lastslash+1:]
+		if os.path.exists(dir_name):
+			readfile = open(dir_name, 'rb')
+			clientsocket.send(readfile.read())
+			readfile.close()	
+		else:
+			cwd = os.getcwd()
+			filename = os.path.join(cwd, dir_name)
+			if not os.path.exists(cwd+'/cache'):
+				os.mkdir(cwd+'/cache')
+			server = socket.socket(socket.AF_INET, socket.SOCK_STREAM) #connect to and send request to server
+			server.connect((host.decode('UTF-8'), portNo))
+			
+			request_header = parserequest(path, host, request.decode('UTF-8'))
+			server.send(request_header.encode())
+			while True:
+				response = server.recv(BUFSIZ)
+				if(len(response)>0):
+					writefile = open(filename, 'ab')
+					writefile.write(response)
+					clientsocket.send(response)
+				else:
+					break
+					sys.exit()
+			server.close()
+			writefile.close()
+	clientsocket.close()
+	s.close()
+	
+		
+		
+def parseurl(request):
+	first_line = request.split(b'\r\n')[0]
+	url = first_line.split(b' ')[1] #get url between GET and HTTP/1.1
+	http_pos = url.find(b'://')
+	if http_pos == -1: #find position of ://
+		if url[0] == '/':
+			temp = url[1:]
+		else:
+			temp = url 
+	else:
+		temp = url[(http_pos+3):]
+	port_pos = temp.find(b':') #find the position of portNo
+	first_slash = temp.index(b'/')
+	if(port_pos == -1):
+		portNo = 80 #default portNo
+		host = temp[0:first_slash]
+	else:
+		last_slash_pos = temp.rindex(b'/')
+		portNo = int(temp[(port_pos+1):last_slash_pos])
+		host = temp[:port_pos]
+	path = temp[first_slash:]		
+	return [host,portNo,url,path]
+	
+def parserequest(path, host, request):
+	get_header = 'GET ' + path.decode('UTF-8') + ' HTTP/1.0\r\n'
+	host_header = 'Host: ' + host.decode('UTF-8') + '\r\n'
+	user_agent_header = 'User-Agent: Mozilla/5.0 (x11; Linux x86_64; rv:56.0) Gecko/20100101 Firefox/56.0\r\n'
+	connection_header = 'Connection: close\r\n'
+	proxy_connection_header = 'Proxy-Connection: close\r\n'
+	requests = request.split('\r\n')
+	left = ''
+	for r in requests:
+		if r.find('GET')==-1 and r.find('Host')==-1 and r.find('User-Agent')==-1 and r.find('Connection')==-1 and r.find('Proxy-Connection')==-1:
+			left = left + r + '\r\n'
+	header = get_header + host_header + user_agent_header + connection_header + proxy_connection_header + left + '\r\n'
+	return header
+	
+def Main():
+	try:
+		main()
+	except KeyboardInterrupt:
+		sys.exit()
+Main()
+
+
+
+
+
+
+
+
+
+
+
+	
+
+
+
+
+
+
+
